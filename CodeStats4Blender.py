@@ -15,6 +15,7 @@ import requests
 import json
 import time
 import math
+import threading
 
 PULSE_ENDPOINT = "https://codestats.net/api/my/pulses"
 PROFILE_ENDPOINT = "https://codestats.net/api/users/"
@@ -25,8 +26,7 @@ def get_level(xp):
 
 def CodeStatsPulse():
     preferences = bpy.context.preferences.addons[__name__].preferences
-    api_key = preferences.api_key
-    if api_key:
+    if api_key := preferences.api_key:
         try:
             print("Sending pulse...")
             pulse_data = {
@@ -43,12 +43,54 @@ def CodeStatsPulse():
                 print("Failed to send pulse. Please check your API key and username.")
 
         except Exception as e:
-            print("An error occurred while sending the pulse.")
+            print(e, "\n", "An error occurred while sending the pulse.")
 
     else:
         print("Please enter your API key in the plugin settings.")
 
     return 300.0
+
+def fetch_profile_info(api_key, username):
+    try:
+        profile_url = PROFILE_ENDPOINT + username
+        headers = {"X-API-Token": api_key}
+        response = requests.get(profile_url, headers=headers)
+
+        if response.status_code == 200:
+            data = json.loads(response.text)
+            user = data["user"]
+            total_xp = data["total_xp"]
+            new_xp = data["new_xp"]
+            level = get_level(total_xp)
+            languages = data["languages"]
+            blender_language = languages["Blender"]
+            blender_xp = blender_language["xps"]
+            blender_level = get_level(blender_xp)
+
+            def draw_ui_callback(self, context):
+                layout = self.layout
+                row = layout.row()
+                row.label(text=f"***** {user} *****")
+                row = layout.row()
+                row.label(text=f"Level {level} - {total_xp} XP")
+                row = layout.row()
+                row.label(
+                    text=f"Blender Level {blender_level} - {blender_xp} XP")
+
+            # Update the UI in the main thread
+            bpy.types.VIEW3D_PT_code_stats_panel.draw = draw_ui_callback
+
+            # Redraw the UI
+            for window in bpy.context.window_manager.windows:
+                for area in window.screen.areas:
+                    if (area.type == "VIEW_3D"):
+                        area.tag_redraw()
+
+        else:
+            print("Failed to fetch profile info. Please check your API key and username.")
+
+    except Exception as e:
+        print(e, "\n", "An error occurred while fetching profile info.")
 
 class CodeStatsPluginSettings(bpy.types.AddonPreferences):
     bl_idname = __name__
@@ -78,36 +120,8 @@ class CodeStatsPanel(bpy.types.Panel):
         username = preferences.username
         
         if api_key and username:
-            try:
-                profile_url = PROFILE_ENDPOINT + username
-                headers = {"X-API-Token": api_key}
-                response = requests.get(profile_url, headers=headers)
-                
-                if response.status_code == 200:
-                    data = json.loads(response.text)
-                    user = data["user"]
-                    total_xp = data["total_xp"]
-                    new_xp = data["new_xp"]
-                    level = get_level(total_xp)
-                    languages = data["languages"]
-                    blender_language = languages["Blender"]
-                    blender_xp = blender_language["xps"]
-                    blender_level = get_level(blender_xp)
-
-                    row = layout.row()
-                    row.label(text=f"***** {user} *****")
-                    row = layout.row()
-                    row.label(text=f"Level {level} - {total_xp} XP")
-                    row = layout.row()
-                    row.label(text=f"Blender Level {blender_level} - {blender_xp} XP")
-
-                else:
-                    row = layout.row()
-                    row.label(text="Failed to fetch profile info. Please check your API key and username.")
-
-            except Exception as e:
-                row = layout.row()
-                row.label(text="An error occurred while fetching profile info.")
+            # Run network request in a separate thread to avoid UI lagging
+            threading.Thread(target=fetch_profile_info, args=(api_key, username)).start()
 
         else:
             row = layout.row()
@@ -128,5 +142,3 @@ def unregister():
     bpy.utils.unregister_class(CodeStatsPanel)
     bpy.app.timers.unregister(CodeStatsPulse)
     
-if __name__ == "__main__":
-    register()

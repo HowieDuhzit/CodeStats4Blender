@@ -128,5 +128,3 @@ def unregister():
     bpy.utils.unregister_class(CodeStatsPanel)
     bpy.app.timers.unregister(CodeStatsPulse)
     
-if __name__ == "__main__":
-    register()
